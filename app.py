@@ -84,7 +84,7 @@ def check_and_reset_credits(username):
         pass
     return 0
 
-# --- UPDATED PDF Processing ---
+# --- FIXED PDF Processing ---
 def process_master_pdf(user_pdf_path, output_path, original_filename, ai_percentage, shared_id):
     user_doc = fitz.open(user_pdf_path)
     if len(user_doc) > 0: user_doc.delete_page(0)
@@ -134,10 +134,10 @@ def process_master_pdf(user_pdf_path, output_path, original_filename, ai_percent
     if old_sub_date: replacements[old_sub_date] = sub_date_str
     if old_down_date: replacements[old_down_date] = down_date_str
 
-    # Page 1 fixes
+    # Page 1
     for old_txt, new_txt in replacements.items():
         if not old_txt: continue
-        for inst in page1.search_for(old_txt, quads=True):
+        for inst in page1.search_for(old_txt):
             rect_to_clear = fitz.Rect(inst.x0 - 8, inst.y0 - 2, inst.x1 + 12, inst.y1 + 3)
             page1.add_redact_annot(rect_to_clear, fill=(1, 1, 1))
             page1.apply_redactions()
@@ -146,18 +146,18 @@ def process_master_pdf(user_pdf_path, output_path, original_filename, ai_percent
             page1.insert_text((x_pos, inst.y1 - 1), str(new_txt), fontsize=18 if is_main_title else 9.8, 
                               fontname="hebo" if is_main_title else "helv", color=(0, 0, 0))
 
-    # Name fix
-    aa_matches = page1.search_for("Aa Aa", quads=True)
+    # Name
+    aa_matches = page1.search_for("Aa Aa")
     if aa_matches:
         for aa_inst in aa_matches:
             page1.add_redact_annot(fitz.Rect(aa_inst.x0 - 4, aa_inst.y0 - 3, aa_inst.x1 + 15, aa_inst.y1 + 3), fill=(1, 1, 1))
             page1.apply_redactions()
             page1.insert_text((aa_inst.x0, aa_inst.y1 - 0.8), "Labib Hasan", fontsize=19.8, fontname="hebo", color=(0, 0, 0))
 
-    # Page 2 AI fixes
+    # Page 2
     if len(template_doc) > 1:
         page2 = template_doc[1]
-        ai_headers = page2.search_for("58% detected as AI", quads=True)
+        ai_headers = page2.search_for("58% detected as AI")
         if ai_headers:
             inst = ai_headers[0]
             page2.add_redact_annot(fitz.Rect(inst.x0 - 3, inst.y0 - 4, inst.x1 + 10, inst.y1 + 2), fill=(1, 1, 1))
@@ -253,7 +253,7 @@ def apply_header_and_footer(input_pdf_path, output_path, shared_id):
     del doc
     gc.collect()
 
-# --- Routes (এগুলো আগের মতোই রাখা হয়েছে, কোনো পরিবর্তন লাগেনি) ---
+# --- Routes ---
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     return templates.TemplateResponse(request=request, name="login.html", context={"request": request, "error": None})
@@ -376,7 +376,6 @@ async def download_past_file(request: Request, file_id: int, background_tasks: B
         
     return HTMLResponse("<h3>ফাইলটি সার্ভারে পাওয়া যায়নি বা ইতিমধ্যে ডিলিট হয়ে গেছে!</h3><br><a href='/'>হোমে ফিরে যান</a>", status_code=404)
 
-# বাকি সব routes (admin, delete ইত্যাদি) আগের মতোই রাখা হয়েছে
 @app.post("/delete_my_file")
 async def delete_my_file(request: Request, file_id: int = Form(...)):
     if not check_active_session(request): return RedirectResponse(url="/login", status_code=303)
@@ -434,7 +433,46 @@ async def admin_dashboard(request: Request):
     total_files = len(os.listdir(UPLOAD_DIR)) + len(os.listdir(OUTPUT_DIR))
     return templates.TemplateResponse(request=request, name="admin.html", context={"request": request, "users": users, "history": history, "total_files": total_files, "daily_usage": daily_usage_list})
 
-# অন্যান্য admin routes আগের মতোই (create_user, update_credits ইত্যাদি) — কপি করে রাখো যদি না থাকে
+@app.post("/admin/create_user")
+async def create_user(request: Request, new_username: str = Form(...), new_password: str = Form(...), initial_credits: int = Form(5)):
+    if not check_active_session(request) or request.session.get("role") != "admin": return HTMLResponse("Access Denied", status_code=403)
+    try:
+        supabase.table("users").insert({"username": new_username, "password": hash_password(new_password), "role": "user", "daily_credits": initial_credits, "credit_limit": initial_credits, "used_credits": 0, "last_reset_date": get_bdt_date()}).execute()
+    except: pass
+    return RedirectResponse(url="/admin", status_code=303)
+
+@app.post("/admin/update_credits")
+async def update_credits(request: Request, up_username: str = Form(...), new_credits: int = Form(...)):
+    if not check_active_session(request) or request.session.get("role") != "admin": return HTMLResponse("Access Denied", status_code=403)
+    try:
+        supabase.table("users").update({"daily_credits": int(new_credits), "credit_limit": int(new_credits)}).eq("username", up_username).execute()
+    except: pass
+    return RedirectResponse(url="/admin", status_code=303)
+
+@app.post("/admin/reset_used_credits")
+async def reset_used_credits(request: Request, rst_username: str = Form(...)):
+    if not check_active_session(request) or request.session.get("role") != "admin": return HTMLResponse("Access Denied", status_code=403)
+    try: supabase.table("users").update({"used_credits": 0}).eq("username", rst_username).execute()
+    except: pass
+    return RedirectResponse(url="/admin", status_code=303)
+
+@app.post("/admin/delete_user")
+async def delete_user(request: Request, del_username: str = Form(...)):
+    if not check_active_session(request) or request.session.get("role") != "admin": return HTMLResponse("Access Denied", status_code=403)
+    if del_username == "admin": return HTMLResponse("Admin account cannot be deleted!", status_code=400)
+    try: supabase.table("users").delete().eq("username", del_username).execute()
+    except: pass
+    return RedirectResponse(url="/admin", status_code=303)
+
+@app.post("/admin/clear_all_files")
+async def clear_all_files(request: Request):
+    if not check_active_session(request) or request.session.get("role") != "admin": return HTMLResponse("Access Denied", status_code=403)
+    for folder in [UPLOAD_DIR, OUTPUT_DIR]:
+        for f in os.listdir(folder):
+            if os.path.isfile(os.path.join(folder, f)): os.remove(os.path.join(folder, f))
+    try: supabase.table("file_history").delete().neq("id", 0).execute()
+    except: pass
+    return RedirectResponse(url="/admin", status_code=303)
 
 if __name__ == '__main__':
     import uvicorn
