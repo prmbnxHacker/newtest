@@ -84,7 +84,7 @@ def check_and_reset_credits(username):
         pass
     return 0
 
-# --- FIXED PDF Processing ---
+# --- FIXED PDF Processing with better font & redaction ---
 def process_master_pdf(user_pdf_path, output_path, original_filename, ai_percentage, shared_id):
     user_doc = fitz.open(user_pdf_path)
     if len(user_doc) > 0: user_doc.delete_page(0)
@@ -134,15 +134,15 @@ def process_master_pdf(user_pdf_path, output_path, original_filename, ai_percent
     if old_sub_date: replacements[old_sub_date] = sub_date_str
     if old_down_date: replacements[old_down_date] = down_date_str
 
-    # Page 1
+    # Page 1 - careful redaction
     for old_txt, new_txt in replacements.items():
         if not old_txt: continue
         for inst in page1.search_for(old_txt):
-            rect_to_clear = fitz.Rect(inst.x0 - 8, inst.y0 - 2, inst.x1 + 12, inst.y1 + 3)
+            rect_to_clear = fitz.Rect(inst.x0 - 5, inst.y0 - 1, inst.x1 + 8, inst.y1 + 2)
             page1.add_redact_annot(rect_to_clear, fill=(1, 1, 1))
             page1.apply_redactions()
             is_main_title = (old_txt == old_title)
-            x_pos = inst.x0 - 6 if old_txt in [old_pages_text, old_words_text, old_chars_text] else inst.x0
+            x_pos = inst.x0 - 5 if old_txt in [old_pages_text, old_words_text, old_chars_text] else inst.x0
             page1.insert_text((x_pos, inst.y1 - 1), str(new_txt), fontsize=18 if is_main_title else 9.8, 
                               fontname="hebo" if is_main_title else "helv", color=(0, 0, 0))
 
@@ -160,7 +160,7 @@ def process_master_pdf(user_pdf_path, output_path, original_filename, ai_percent
         ai_headers = page2.search_for("58% detected as AI")
         if ai_headers:
             inst = ai_headers[0]
-            page2.add_redact_annot(fitz.Rect(inst.x0 - 3, inst.y0 - 4, inst.x1 + 10, inst.y1 + 2), fill=(1, 1, 1))
+            page2.add_redact_annot(fitz.Rect(inst.x0 - 3, inst.y0 - 4, inst.x1 + 12, inst.y1 + 2), fill=(1, 1, 1))
             page2.apply_redactions()
             font_name_to_use, font_size_to_use = "hebo", 18.5
             font_path = os.path.join("static", "LexendDeca-Medium.ttf")
@@ -253,7 +253,7 @@ def apply_header_and_footer(input_pdf_path, output_path, shared_id):
     del doc
     gc.collect()
 
-# --- Routes ---
+# --- Routes (same as before) ---
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     return templates.TemplateResponse(request=request, name="login.html", context={"request": request, "error": None})
